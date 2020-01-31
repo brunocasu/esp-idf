@@ -38,6 +38,11 @@ extern "C" {
 #define I2C_NUM_1              (1) /*!< I2C port 1 */
 #define I2C_NUM_MAX            (SOC_I2C_NUM) /*!< I2C port max */
 
+#define I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_SUCCESS            0
+#define I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_SEMAPHORE_TIMEOUT  2
+#define I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_READ_TIMEOUT       3
+#define I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_READ_BUFFER_FULL   4
+
 typedef void* i2c_cmd_handle_t;    /*!< I2C command handle  */
 
 /**
@@ -333,6 +338,12 @@ int i2c_slave_write_buffer(i2c_port_t i2c_num, uint8_t* data, int size, TickType
  *     - Others(>=0) The number of data bytes that read from I2C slave buffer.
  */
 int i2c_slave_read_buffer(i2c_port_t i2c_num, uint8_t* data, size_t max_size, TickType_t ticks_to_wait);
+
+/**
+ * @brief When in slave mode, this function keeps the device waiting for a message in the I2C line. The loop is exited when a stop bit flag is set.
+ *        The function can also return if the user provided max size of reading is reached or a timeout occours (the timeout is disabled in standard config).
+ */
+int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout = portMAX_DELAY);
 
 /**
  * @brief set I2C master clock period

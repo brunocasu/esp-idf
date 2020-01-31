@@ -146,6 +146,8 @@ typedef struct {
     RingbufHandle_t rx_ring_buf;     /*!< rx ringbuffer handler of slave mode */
     size_t tx_buf_length;            /*!< tx buffer length */
     RingbufHandle_t tx_ring_buf;     /*!< tx ringbuffer handler of slave mode */
+
+    int i2c_stop_bit_flag; // flag to signalize the end of the i2c transmission (arrival of a stop bit)
 } i2c_obj_t;
 
 typedef struct {
@@ -440,7 +442,7 @@ static void IRAM_ATTR i2c_isr_handler_default(void *arg)
             i2c_master_cmd_begin_static(i2c_num);
         } else if(evt_type == I2C_INTR_EVENT_TOUT) {
             p_i2c_obj[i2c_num]->status = I2C_STATUS_TIMEOUT;
-            i2c_master_cmd_begin_static(i2c_num); 
+            i2c_master_cmd_begin_static(i2c_num);
         } else if (evt_type == I2C_INTR_EVENT_ARBIT_LOST) {
             p_i2c_obj[i2c_num]->status = I2C_STATUS_TIMEOUT;
             i2c_master_cmd_begin_static(i2c_num);
@@ -463,6 +465,7 @@ static void IRAM_ATTR i2c_isr_handler_default(void *arg)
             i2c_hal_read_rxfifo(&(i2c_context[i2c_num].hal), p_i2c->data_buf, rx_fifo_cnt);
             xRingbufferSendFromISR(p_i2c->rx_ring_buf, p_i2c->data_buf, rx_fifo_cnt, &HPTaskAwoken);
             i2c_hal_slave_clr_rx_it(&(i2c_context[i2c_num].hal));
+            p_i2c_obj[i2c_num]->i2c_stop_bit_flag = 1; // rises the stop bit flag
         } else if (evt_type == I2C_INTR_EVENT_TXFIFO_EMPTY) {
             uint32_t tx_fifo_rem;
             i2c_hal_get_txfifo_cnt(&(i2c_context[i2c_num].hal), &tx_fifo_rem);
@@ -1022,7 +1025,7 @@ static void IRAM_ATTR i2c_master_cmd_begin_static(i2c_port_t i2c_num)
         return;
     } else if (p_i2c->status == I2C_STATUS_DONE) {
         return;
-    } 
+    }
 
     if (p_i2c->cmd_link.head == NULL) {
         p_i2c->cmd_link.cur = NULL;
@@ -1273,4 +1276,45 @@ int i2c_slave_read_buffer(i2c_port_t i2c_num, uint8_t* data, size_t max_size, Ti
     }
     xSemaphoreGive(p_i2c->slv_rx_mux);
     return max_size - size_rem;
+}
+
+// Receives a full I2C transaction, or exits when the user buffer is filled, or does so when times out (if specified different from portMAX_DELAY)
+int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout = portMAX_DELAY){
+    TickType_t const ticks_end = xTaskGetTickCount() + ticks_timeout;
+    I2C_CHECK(( i2c_num < I2C_NUM_MAX ), I2C_NUM_ERROR_STR, ESP_FAIL);
+    I2C_CHECK(p_i2c_obj[i2c_num] != NULL, I2C_DRIVER_ERR_STR, ESP_FAIL);
+    I2C_CHECK((user_buffer != NULL), I2C_ADDR_ERROR_STR, ESP_FAIL);
+    I2C_CHECK(p_i2c_obj[i2c_num]->mode == I2C_MODE_SLAVE, I2C_MODE_SLAVE_ERR_STR, ESP_FAIL);
+    p_i2c_obj[i2c_num]->i2c_stop_bit_flag = 0;
+    i2c_obj_t* p_i2c = p_i2c_obj[i2c_num];
+    TickType_t ticks_remaining = ticks_end - xTaskGetTickCount();
+    if (xSemaphoreTake(p_i2c->slv_rx_mux, ticks_remaining) == pdFALSE){
+        return I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_SEMAPHORE_TIMEOUT;
+    }
+    I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
+    i2c_hal_enable_slave_rx_it(&(i2c_context[i2c_num].hal));
+    I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
+    while ( p_i2c_obj[i2c_num]->i2c_stop_bit_flag == 0 ){ // Exits at the end of the I2C transaction (i.e. stop bit is received)
+        size_t received_size = 0;
+        ticks_remaining = ticks_end - xTaskGetTickCount();
+        uint8_t* received_data = (uint8_t*) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &received_size, ticks_remaining, *user_buffer_free_size);
+        // If we received something, copy it to the user buffer
+        if (received_data != NULL && received_size > 0){
+            memcpy(user_buffer, received_data, size);
+            vRingbufferReturnItem(p_i2c->rx_ring_buf, received_data);
+            // Move the write pointer in the user buffer and update the free space counter
+            user_buffer           += received_size;
+            user_buffer_free_size -= received_size;
+        }
+        // If we filled the user buffer and the I2C transaction is not over yet, alert the user with an error code
+        if (*user_buffer_free_size == 0 && p_i2c_obj[i2c_num]->i2c_stop_bit_flag == 0){
+            return I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_READ_BUFFER_FULL;
+        }
+        // If we timed out and the I2C transaction is not over yet, alert the user with an error code
+        if (ticks_timeout != portMAX_DELAY && xTaskGetTickCount() == ticks_end && p_i2c_obj[i2c_num]->i2c_stop_bit_flag == 0){
+            return I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_READ_TIMEOUT;
+        }
+    }
+    xSemaphoreGive(p_i2c->slv_rx_mux);
+    return I2C_SLAVE_RECEIVE_MESSAGE_RETVAL_SUCCESS;
 }
