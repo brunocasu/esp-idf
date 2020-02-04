@@ -339,11 +339,15 @@ int i2c_slave_write_buffer(i2c_port_t i2c_num, uint8_t* data, int size, TickType
  */
 int i2c_slave_read_buffer(i2c_port_t i2c_num, uint8_t* data, size_t max_size, TickType_t ticks_to_wait);
 
+
+int i2c_slave_read_buffer_custom(i2c_port_t i2c_num, uint8_t* data, size_t max_size, TickType_t ticks_to_wait);
+
+
 /**
  * @brief When in slave mode, this function keeps the device waiting for a message in the I2C line. The loop is exited when a stop bit flag is set.
  *        The function can also return if the user provided max size of reading is reached or a timeout occours (the timeout is disabled in standard config).
  */
-int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout = portMAX_DELAY);
+int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout);
 
 /**
  * @brief set I2C master clock period

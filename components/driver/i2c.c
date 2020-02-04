@@ -1279,7 +1279,7 @@ int i2c_slave_read_buffer(i2c_port_t i2c_num, uint8_t* data, size_t max_size, Ti
 }
 
 // Receives a full I2C transaction, or exits when the user buffer is filled, or does so when times out (if specified different from portMAX_DELAY)
-int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout = portMAX_DELAY){
+int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* user_buffer_free_size, TickType_t const ticks_timeout){
     TickType_t const ticks_end = xTaskGetTickCount() + ticks_timeout;
     I2C_CHECK(( i2c_num < I2C_NUM_MAX ), I2C_NUM_ERROR_STR, ESP_FAIL);
     I2C_CHECK(p_i2c_obj[i2c_num] != NULL, I2C_DRIVER_ERR_STR, ESP_FAIL);
@@ -1300,11 +1300,11 @@ int i2c_slave_receive_message(i2c_port_t i2c_num, uint8_t* user_buffer, size_t* 
         uint8_t* received_data = (uint8_t*) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &received_size, ticks_remaining, *user_buffer_free_size);
         // If we received something, copy it to the user buffer
         if (received_data != NULL && received_size > 0){
-            memcpy(user_buffer, received_data, size);
+            memcpy(user_buffer, received_data, received_size);
             vRingbufferReturnItem(p_i2c->rx_ring_buf, received_data);
             // Move the write pointer in the user buffer and update the free space counter
-            user_buffer           += received_size;
-            user_buffer_free_size -= received_size;
+            user_buffer            += received_size;
+            *user_buffer_free_size -= received_size;
         }
         // If we filled the user buffer and the I2C transaction is not over yet, alert the user with an error code
         if (*user_buffer_free_size == 0 && p_i2c_obj[i2c_num]->i2c_stop_bit_flag == 0){
